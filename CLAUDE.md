@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 It has no dependencies; nlohmann/json is bundled in `src/nlohmann_json.hpp` and stays private.
 
 Consumers:
-- **campello_renderer:** its GPU baker builds on this library's graphs.
+- **campello_renderer:** bakes glTF materials' KHR_texture_procedurals graphs with it (`uploadMaterial()`, `setScene()`).
 - **gltf:** converts its parsed extension to and from these graphs.
 - **campello_bim:** its materials embed graphs and bake them for the 3D view.
 
