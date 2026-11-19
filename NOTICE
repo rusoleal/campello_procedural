@@ -1,0 +1,17 @@
+campello_procedural
+Copyright 2026 Ruben Leal Mirete
+
+This product includes software from the MaterialX project
+(https://github.com/AcademySoftwareFoundation/MaterialX):
+src/noise.hpp ports the noise functions of
+libraries/stdlib/genglsl/lib/mx_noise.glsl.
+Copyright Contributors to the MaterialX Project.
+Licensed under the Apache License, Version 2.0.
+
+This product bundles nlohmann/json 3.12.0 (src/nlohmann_json.hpp),
+Copyright (c) 2013-2025 Niels Lohmann, licensed under the MIT License
+(see the license text at the top of that file).
+
+test/checkerboard_example.json is the checkerboard example of the draft
+KHR_texture_procedurals extension (https://github.com/KhronosGroup/glTF/pull/2381),
+Copyright The Khronos Group Inc., used as a test fixture.
