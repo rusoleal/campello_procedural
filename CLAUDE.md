@@ -39,7 +39,8 @@ ctest --test-dir build/debug        # or ./build/debug/campello_procedural_test
 
 - **Coordinates are MaterialX's:** v up, and texel row 0 is v = 1, so baked images are glTF textures as they are. Ramps and splits follow that: `valuet` is at the top, v = 1.
 - **Registers:** 0 holds texcoord and 1 holds position, both (u, v, 0). Then come constants and graph inputs (set per bake), then node outputs. `separateN` writes consecutive registers.
-- **`heighttonormal`** re-runs the instructions its height depends on (`Instr::cone`) at ±1 texel, then runs them again at the centre so later readers see centre values.
+- **`heighttonormal`, read only by graph outputs** (`Instr::deferred`, set by `Program::compile()`): `bake()` evaluates on a grid one texel wider, stores the height, and differences it after the pass.
+- **`heighttonormal`, read by another node:** re-runs the instructions its height depends on (`Instr::cone`) at ±1 texel, then runs them again at the centre so later readers see centre values. `DeferredNormalsMatchReevaluatedOnes` keeps the two paths equal.
 - **Adding a node:**
   1. Define it in `nodes.cpp`.
   2. Add an `Op` with its `opTable()` entry, plus its `exec()` case reading operands in definition order.
