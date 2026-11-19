@@ -117,6 +117,35 @@ TEST(Bake, HeightToNormalLeavesSharedNodesAtTheCentre) {
     EXPECT_FLOAT_EQ(at(*baked.find("height"), 1, 0)[0], 0.375f);
 }
 
+// A normal read only by outputs is computed from stored heights after the
+// pass; one that another node reads re-evaluates the height at neighbours.
+// Both give the same normals, edges included, tileable or not.
+TEST(Bake, DeferredNormalsMatchReevaluatedOnes) {
+    for (const bool tileable : {false, true}) {
+        cp::Graph graph = single({
+            node("texcoord", VT::vector2),
+            node("multiply", VT::vector2, {fromNode("in1", VT::vector2, 0), value("in2", cp::Value::makeVector2(3, 3))}),
+            node("fractal2d", VT::float1, {fromNode("texcoord", VT::vector2, 1)}),
+            node("heighttonormal", VT::vector3, {fromNode("in", VT::float1, 2), value("scale", cp::Value::makeFloat(0.05f))}),
+        });
+        graph.outputs = {output("normal", VT::vector3, 3)};
+        cp::Graph read = graph;  // the normal also read by a node: not deferred
+        read.nodes.push_back(node("dot", VT::vector3, {fromNode("in", VT::vector3, 3)}));
+        read.outputs.push_back(output("copy", VT::vector3, 4));
+        auto options = size(24, 16);
+        options.tileable = tileable;
+        options.outputs = {"normal"};
+        const auto deferred = cp::bake(graph, options);
+        const auto reevaluated = cp::bake(read, options);
+        ASSERT_TRUE(deferred.ok() && reevaluated.ok());
+        float worst = 0.0f;
+        for (size_t i = 0; i < deferred.images[0].rgba.size(); ++i) {
+            worst = std::max(worst, std::fabs(deferred.images[0].rgba[i] - reevaluated.images[0].rgba[i]));
+        }
+        EXPECT_LT(worst, 1e-4f) << (tileable ? "tileable" : "plain");
+    }
+}
+
 TEST(Bake, PerlinNoiseIsZeroOnTheLatticeAndBounded) {
     // Scaled so texel centres hit integer coordinates: u * 8 at u = (x + 0.5) / 8 is x + 0.5; shift by 0.5.
     const auto graph = single({

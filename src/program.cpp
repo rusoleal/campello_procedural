@@ -77,6 +77,9 @@ struct Instr {
     int image = -1;                             // index into Impl::images
     Address uAddress = Address::periodic, vAddress = Address::periodic;
     bool nearest = false;
+    // heighttonormal read only by graph outputs: bake() computes it from the
+    // heights stored over the image instead of re-evaluating its cone.
+    bool deferred = false;
     // heighttonormal: the instructions its height depends on. Lattice nodes
     // (noise, fractal, cell, Worley): those their coordinates depend on, to
     // measure their period in tileable bakes.
@@ -753,6 +756,7 @@ void exec(const Instr& in, Vec4* regs, const Context& ctx) {
             break;
         }
         case Op::heighttonormal: {
+            if (in.deferred) break;  // bake() differences the stored heights
             // Central differences of the height in texture coordinates (one
             // texel apart), re-evaluating the nodes the height depends on.
             const Vec4 uv0 = regs[kTexcoordReg], pos0 = regs[kPositionReg];
@@ -891,6 +895,15 @@ std::shared_ptr<const Program> Program::compile(const Graph& graph, std::string*
         if (error) *error = message;
         return nullptr;
     }
+    // heighttonormal nodes no instruction reads (only graph outputs) are
+    // deferred: computed after the pass from their heights.
+    std::vector<bool> read(impl->registerCount, false);
+    for (const auto& instr : impl->code) {
+        for (const auto& operand : instr.in) read[operand.reg] = true;
+    }
+    for (auto& instr : impl->code) {
+        if (instr.op == Op::heighttonormal && !read[instr.out]) instr.deferred = true;
+    }
     return std::shared_ptr<const Program>(new Program(std::move(impl)));
 }
 
@@ -970,20 +983,44 @@ BakeResult bake(const Program& program, const BakeOptions& options) {
         ctx.periods = &periods;
     }
 
+    // Deferred normals: their heights (and scales) over the image and a
+    // one-texel border, differenced after the pass. Same positions as
+    // re-evaluating the height one texel away, at one evaluation per texel
+    // instead of five.
+    std::vector<uint32_t> deferred;
+    for (uint32_t i = 0; i < impl.code.size(); ++i) {
+        if (impl.code[i].deferred) deferred.push_back(i);
+    }
+    const int border = deferred.empty() ? 0 : 1;
+    const uint32_t ew = w + 2 * uint32_t(border), eh = h + 2 * uint32_t(border);
+    std::vector<std::vector<float>> heights(deferred.size()), scales(deferred.size());
+    for (size_t d = 0; d < deferred.size(); ++d) {
+        heights[d].assign(size_t(ew) * eh, 0.0f);
+        scales[d].assign(size_t(ew) * eh, 0.0f);
+    }
+
     std::atomic<uint32_t> nextRow{0};
     const auto worker = [&] {
         std::vector<Vec4> regs = initial;
-        for (uint32_t y = nextRow++; y < h; y = nextRow++) {
+        for (uint32_t row = nextRow++; row < eh; row = nextRow++) {
+            const int y = int(row) - border;
             // MaterialX coordinates: v up, so row 0 (the top) is v = 1.
             const float v = 1.0f - (float(y) + 0.5f) / float(h);
-            for (uint32_t x = 0; x < w; ++x) {
+            for (int x = -border; x < int(w) + border; ++x) {
                 const float u = (float(x) + 0.5f) / float(w);
                 regs[kTexcoordReg] = {u, v, 0.0f, 0.0f};
                 regs[kPositionReg] = {u, v, 0.0f, 0.0f};
                 for (const auto& instr : impl.code) exec(instr, regs.data(), ctx);
+                const size_t e = size_t(row) * ew + size_t(x + border);
+                for (size_t d = 0; d < deferred.size(); ++d) {
+                    const Instr& instr = impl.code[deferred[d]];
+                    heights[d][e] = regs[instr.in[0].reg][0];
+                    scales[d][e] = load(regs.data(), instr.in[1])[0];
+                }
+                if (x < 0 || y < 0 || x >= int(w) || y >= int(h)) continue;  // the border
                 for (size_t t = 0; t < targets.size(); ++t) {
                     const Vec4& value = regs[targets[t].reg];
-                    float* texel = result.images[t].texel(x, y);
+                    float* texel = result.images[t].texel(uint32_t(x), uint32_t(y));
                     switch (targets[t].comps) {
                         case 1: texel[0] = texel[1] = texel[2] = value[0]; texel[3] = 1.0f; break;
                         case 2: texel[0] = value[0]; texel[1] = value[1]; texel[2] = 0.0f; texel[3] = 1.0f; break;
@@ -995,11 +1032,39 @@ BakeResult bake(const Program& program, const BakeOptions& options) {
         }
     };
     uint32_t threads = options.threads ? options.threads : std::max(1u, std::thread::hardware_concurrency());
-    threads = std::min(threads, h);
+    threads = std::min(threads, eh);
     std::vector<std::thread> pool;
     for (uint32_t t = 1; t < threads; ++t) pool.emplace_back(worker);
     worker();
     for (auto& thread : pool) thread.join();
+
+    // The deferred normals, from the heights: central differences one texel
+    // apart (v up: the row above is v + dv), as heighttonormal evaluates.
+    for (size_t d = 0; d < deferred.size(); ++d) {
+        const Instr& instr = impl.code[deferred[d]];
+        const auto H = [&](uint32_t x, uint32_t y) { return heights[d][size_t(y) * ew + x]; };
+        for (uint32_t y = 0; y < h; ++y) {
+            for (uint32_t x = 0; x < w; ++x) {
+                const uint32_t ex = x + 1, ey = y + 1;
+                const float scale = scales[d][size_t(ey) * ew + ex];
+                const float hx = (H(ex + 1, ey) - H(ex - 1, ey)) / (2.0f * ctx.du);
+                const float hy = (H(ex, ey - 1) - H(ex, ey + 1)) / (2.0f * ctx.dv);
+                float nx = -hx * scale, ny = -hy * scale, nz = 1.0f;
+                const float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+                nx /= len;
+                ny /= len;
+                nz /= len;
+                for (size_t t = 0; t < targets.size(); ++t) {
+                    if (targets[t].reg != instr.out) continue;
+                    float* texel = result.images[t].texel(x, y);
+                    texel[0] = nx * 0.5f + 0.5f;
+                    texel[1] = ny * 0.5f + 0.5f;
+                    texel[2] = nz * 0.5f + 0.5f;
+                    texel[3] = 1.0f;
+                }
+            }
+        }
+    }
     return result;
 }
 

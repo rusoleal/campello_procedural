@@ -11,6 +11,10 @@
   - 4 new tests. A graph moved by one tile bakes the same image for every lattice node, and per-cell values over floored coordinates tile. The seam is no sharper than any neighbouring pair of columns. The warning cases are covered.
 - **`BakeResult::warnings`**.
 
+### Changed
+- **Faster normals.** A `heighttonormal` read only by graph outputs (the usual case: a normal map) is computed after the pass, from its height stored over the image plus a one-texel border. Before, it was re-evaluated one texel away in four directions and at the centre, five evaluations per texel. The positions are the same, so the results match the re-evaluating path to within 1e-4, edges included. That's tested, tileable and not.
+  - About 5x faster for graphs whose normal comes from a large height graph: BIM's six material textures took 2.2 s on one thread and now take 451 ms (90 ms on all threads).
+
 ## [0.1.0] - 2026-11-19
 
 ### Added
