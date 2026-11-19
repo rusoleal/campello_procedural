@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`campello_procedural` (v0.2.0) is a C++20 static library for procedural texture graphs:
+`campello_procedural` (v0.3.0) is a C++20 static library for procedural texture graphs:
 - MaterialX 1.39 standard library nodes.
 - The JSON of the draft glTF extension `KHR_texture_procedurals` (KhronosGroup/glTF#2381; a draft, still changing).
 - Baked to float images on the CPU.
@@ -31,6 +31,7 @@ ctest --test-dir build/debug        # or ./build/debug/campello_procedural_test
 | `inc/campello_procedural/value.hpp`, `src/value.cpp` | `ValueType` (MaterialX type names), `Value`. Graph/Node lookups also live in `value.cpp`. |
 | `graph.hpp` | `Graph`, `Node`, `Input`, `Output`. Connections are by node index plus output name, or by graph input name. |
 | `json.hpp`, `src/json.cpp` | Reads both of the draft's layouts and writes the README layout (ports keyed by name). Uses `nlohmann::ordered_json` so port order survives. |
+| `materialx.hpp`, `src/materialx.cpp` | `readMaterialX()`: a small XML reader (elements and attributes only), then `Converter` builds one graph per surface material from its shader's inputs (`shaderSlots()`), following connections through node graphs and top-level nodes. Node graphs' interface inputs with values become graph inputs, and unknown nodes become constants with a warning. |
 | `nodes.hpp`, `src/nodes.cpp` | The node registry: category -> type -> `NodeDef` (inputs with MaterialX defaults, outputs). Inputs with `ValueType::none` take any numeric type. `DefaultSource` marks texcoord/position defaults. |
 | `bake.hpp`, `src/program.cpp` | `Program::compile()` (`Compiler`: depth-first from the graph outputs, one instruction per node, registers of 4 floats; a float source broadcasts into a vector input) and `bake()`, plus RGBA8 encoding and mip chains. |
 | `src/noise.hpp` | The MaterialX noise port. Keep it faithful to `mx_noise.glsl`, so graphs bake the same as in MaterialX. |

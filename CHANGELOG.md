@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0] - 2026-11-19
+
+### Added
+- **MaterialX import** (`readMaterialX()`, `materialx.hpp`): MaterialX documents (.mtlx, 1.38 and 1.39) as graphs, one per surface material (or per surface shader when there are no materials).
+  - **Outputs** are the material's texture slots, named as glTF's: `base_color`, `normal` (tangent space, encoded 0..1), `roughness`, `metallic`, `emissive`. Only those the shader uses are present, apart from `normal`, which is always there (flat when the shader has none).
+  - **Shaders:** `standard_surface`, `gltf_pbr`, `open_pbr_surface`, `UsdPreviewSurface`.
+  - **Connections** are followed through node graphs' outputs, nodes inside graphs and top-level nodes. A `normalmap` feeding the normal is replaced by its tangent-space input. Values in sRGB (`colorspace="srgb_texture"`) are converted to linear.
+  - **Parameters.** Node graphs' interface inputs that carry a value become the graph's inputs, with their UI names, folders and ranges, so a material's parameters stay editable.
+  - **Warnings, not errors**, for what can't be used: image files (image nodes keep their default), unknown nodes (replaced by a constant of their type), unsupported shaders, functional node graphs.
+  - A small built-in XML reader keeps the library free of dependencies.
+  - 3 new tests, including a marble modelled on MaterialX's `standard_surface_marble_solid` example, which bakes and survives the glTF JSON.
+
 ## [0.2.0] - 2026-11-19
 
 ### Added

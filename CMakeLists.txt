@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 
-project(campello_procedural VERSION 0.2.0 LANGUAGES CXX)
+project(campello_procedural VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,6 +13,7 @@ find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME}
     src/json.cpp
+    src/materialx.cpp
     src/nodes.cpp
     src/program.cpp
     src/value.cpp
@@ -51,6 +52,7 @@ if(CAMPELLO_PROCEDURAL_BUILD_TEST)
     add_executable(${PROJECT_NAME}_test
         test/bake_test.cpp
         test/json_test.cpp
+        test/materialx_test.cpp
         test/nodes_test.cpp
         test/tileable_test.cpp
     )
