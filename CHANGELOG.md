@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0] - 2026-11-19
+
+### Added
+- **Tileable bakes** (`BakeOptions::tileable`), for textures repeated across a surface: the image repeats seamlessly. MaterialX noise doesn't repeat, so each lattice node (Perlin, fractal, cell and Worley noise, 2D and 3D) wraps its lattice at the period its coordinates have over one tile.
+  - **Measuring the period.** Before the bake, the coordinates are evaluated at four sample points and at the same points one tile along u and along v. They must move a whole number of cells, the same everywhere; each lattice axis then wraps at the greatest common divisor of its moves. That covers coordinates scaled by whole numbers, offset, floored (a value per brick), rotated by quarter turns, or distorted by something that itself tiles.
+  - **Fractals** wrap every octave when their lacunarity is a whole number.
+  - **Warnings.** Nodes whose coordinates don't repeat (a 30 degree turn, 4.5 cells per tile, a fractional lacunarity) are left as they are and named in `BakeResult::warnings`.
+  - **Default unchanged.** Without the option, bakes are MaterialX's as before.
+  - 4 new tests. A graph moved by one tile bakes the same image for every lattice node, and per-cell values over floored coordinates tile. The seam is no sharper than any neighbouring pair of columns. The warning cases are covered.
+- **`BakeResult::warnings`**.
+
 ## [0.1.0] - 2026-11-19
 
 ### Added

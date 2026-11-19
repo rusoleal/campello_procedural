@@ -77,8 +77,31 @@ struct Instr {
     int image = -1;                             // index into Impl::images
     Address uAddress = Address::periodic, vAddress = Address::periodic;
     bool nearest = false;
-    std::vector<uint32_t> cone;  // heighttonormal: the instructions its height depends on
+    // heighttonormal: the instructions its height depends on. Lattice nodes
+    // (noise, fractal, cell, Worley): those their coordinates depend on, to
+    // measure their period in tileable bakes.
+    std::vector<uint32_t> cone;
+    std::string name;  // the node's, for warnings
 };
+
+// Lattice nodes, and the operand holding their coordinates.
+int latticeOperand(Op op) {
+    switch (op) {
+        case Op::noise2d:
+        case Op::noise3d: return 2;
+        case Op::fractal2d:
+        case Op::fractal3d: return 4;
+        case Op::cellnoise2d:
+        case Op::cellnoise3d:
+        case Op::worleynoise2d:
+        case Op::worleynoise3d: return 0;
+        default: return -1;
+    }
+}
+
+bool is2d(Op op) {
+    return op == Op::noise2d || op == Op::fractal2d || op == Op::cellnoise2d || op == Op::worleynoise2d;
+}
 
 // Registers 0 and 1: the texel's texture coordinates and position.
 constexpr uint32_t kTexcoordReg = 0;
@@ -289,6 +312,10 @@ private:
         instr.outComps = outputs.front().second.comps;
         if (instr.op == Op::separate) instr.outComps = uint8_t(def.outputs.size());
         if (instr.op == Op::heighttonormal) collectCone(instr.in[0].reg, instr.cone);
+        if (const int operand = latticeOperand(instr.op); operand >= 0) {
+            collectCone(instr.in[size_t(operand)].reg, instr.cone);
+        }
+        instr.name = node.name.empty() ? node.category + " " + std::to_string(n) : node.name;
         const uint32_t index = uint32_t(impl_.code.size());
         for (const auto& [_, operand] : outputs) producer_[operand.reg] = index;
         impl_.code.push_back(std::move(instr));
@@ -338,6 +365,8 @@ struct Context {
     const Program::Impl* impl = nullptr;
     const std::vector<std::shared_ptr<const Image>>* images = nullptr;
     float du = 0.0f, dv = 0.0f;  // one texel, for heighttonormal
+    // Per instruction: the lattice periods of a tileable bake (zeros: none).
+    const std::vector<noise::Period>* periods = nullptr;
 };
 
 inline Vec4 load(const Vec4* regs, const Operand& o) {
@@ -448,19 +477,19 @@ Vec4 sampleImage(const Image& image, float u, float v, const Instr& instr, const
 }
 
 template <typename P>
-Vec4 perlinOut(P p, int comps) {
+Vec4 perlinOut(P p, int comps, const noise::Period& period) {
     if (comps == 1) {
-        const float n = noise::perlin(p);
+        const float n = noise::perlin(p, period);
         return {n, n, n, n};
     }
-    const auto v = noise::perlinVec3(p);
+    const auto v = noise::perlinVec3(p, period);
     float w = 0.0f;
     if (comps == 4) {
         P q = p;
         q[0] += 19.0f;
         q[1] += 73.0f;
         if constexpr (std::tuple_size_v<P> == 3) q[2] += 37.0f;
-        w = noise::perlin(q);
+        w = noise::perlin(q, period);
     }
     return {v[0], v[1], v[2], w};
 }
@@ -473,6 +502,10 @@ void runCone(const std::vector<uint32_t>& cone, Vec4* regs, const Context& ctx) 
 
 void exec(const Instr& in, Vec4* regs, const Context& ctx) {
     const auto a = [&](size_t i) { return load(regs, in.in[i]); };
+    const auto period = [&]() -> const noise::Period& {
+        if (!ctx.periods) return noise::kNoPeriod;
+        return (*ctx.periods)[size_t(&in - ctx.impl->code.data())];
+    };
     Vec4& out = regs[in.out];
     const int n = in.outComps;
     switch (in.op) {
@@ -663,8 +696,8 @@ void exec(const Instr& in, Vec4* regs, const Context& ctx) {
             const Vec4 amplitude = a(0);
             const float pivot = a(1)[0];
             const Vec4 p = a(2);
-            const Vec4 v = in.op == Op::noise2d ? perlinOut(noise::Vec2{p[0], p[1]}, n)
-                                                : perlinOut(noise::Vec3{p[0], p[1], p[2]}, n);
+            const Vec4 v = in.op == Op::noise2d ? perlinOut(noise::Vec2{p[0], p[1]}, n, period())
+                                                : perlinOut(noise::Vec3{p[0], p[1], p[2]}, n, period());
             for (size_t i = 0; i < 4; ++i) out[i] = v[i] * amplitude[i] + pivot;
             break;
         }
@@ -676,9 +709,19 @@ void exec(const Instr& in, Vec4* regs, const Context& ctx) {
             Vec4 p = a(4);
             Vec4 sum{};
             float amp = 1.0f;
+            // Tileable: octave o's coordinates are lacunarity^o times the
+            // first's, and so is its period (a whole number only for a whole
+            // lacunarity; otherwise that octave doesn't wrap).
+            const noise::Period base = period();
+            float scale = 1.0f;
             for (int o = 0; o < octaves; ++o) {
-                const Vec4 v = in.op == Op::fractal2d ? perlinOut(noise::Vec2{p[0], p[1]}, n)
-                                                      : perlinOut(noise::Vec3{p[0], p[1], p[2]}, n);
+                noise::Period octavePeriod = noise::kNoPeriod;
+                if (std::fabs(scale - std::round(scale)) < 1e-4f) {
+                    for (size_t i = 0; i < 3; ++i) octavePeriod[i] = base[i] * int(std::lround(scale));
+                }
+                scale *= lacunarity;
+                const Vec4 v = in.op == Op::fractal2d ? perlinOut(noise::Vec2{p[0], p[1]}, n, octavePeriod)
+                                                      : perlinOut(noise::Vec3{p[0], p[1], p[2]}, n, octavePeriod);
                 for (size_t i = 0; i < 4; ++i) sum[i] += amp * v[i];
                 amp *= diminish;
                 for (size_t i = 0; i < 3; ++i) p[i] *= lacunarity;
@@ -690,12 +733,12 @@ void exec(const Instr& in, Vec4* regs, const Context& ctx) {
         case Op::cellnoise3d: {
             const Vec4 p = a(0);
             if (n == 1) {
-                const float c = in.op == Op::cellnoise2d ? noise::cell(noise::Vec2{p[0], p[1]})
-                                                         : noise::cell(noise::Vec3{p[0], p[1], p[2]});
+                const float c = in.op == Op::cellnoise2d ? noise::cell(noise::Vec2{p[0], p[1]}, period())
+                                                         : noise::cell(noise::Vec3{p[0], p[1], p[2]}, period());
                 out = {c, c, c, c};
             } else {
-                const auto c = in.op == Op::cellnoise2d ? noise::cellVec3(noise::Vec2{p[0], p[1]})
-                                                        : noise::cellVec3(noise::Vec3{p[0], p[1], p[2]});
+                const auto c = in.op == Op::cellnoise2d ? noise::cellVec3(noise::Vec2{p[0], p[1]}, period())
+                                                        : noise::cellVec3(noise::Vec3{p[0], p[1], p[2]}, period());
                 out = {c[0], c[1], c[2], 0.0f};
             }
             break;
@@ -704,8 +747,8 @@ void exec(const Instr& in, Vec4* regs, const Context& ctx) {
         case Op::worleynoise3d: {
             const Vec4 p = a(0);
             const float jitter = a(1)[0];
-            const float d = in.op == Op::worleynoise2d ? noise::worley(noise::Vec2{p[0], p[1]}, jitter)
-                                                       : noise::worley(noise::Vec3{p[0], p[1], p[2]}, jitter);
+            const float d = in.op == Op::worleynoise2d ? noise::worley(noise::Vec2{p[0], p[1]}, jitter, period())
+                                                       : noise::worley(noise::Vec3{p[0], p[1], p[2]}, jitter, period());
             out = {d, d, d, d};
             break;
         }
@@ -749,6 +792,80 @@ void exec(const Instr& in, Vec4* regs, const Context& ctx) {
         case Op::texcoord: out = regs[kTexcoordReg]; break;
         case Op::position: out = regs[kPositionReg]; break;
     }
+}
+
+// Tileable bakes: each lattice node's period, measured at a few sample
+// points from how its coordinates move when the texture coordinates move by
+// one tile (u + 1, v + 1). Along each lattice axis the moves must be whole
+// numbers of cells, the same at every sample (an affine mapping, or one
+// whose distortion repeats); the axis then wraps at their greatest common
+// divisor. Nodes whose coordinates don't move are left alone; the others
+// that fail get a warning.
+std::vector<noise::Period> measurePeriods(const Program::Impl& impl, const std::vector<Vec4>& initial, const Context& ctx,
+                                          std::vector<std::string>& warnings) {
+    std::vector<noise::Period> periods(impl.code.size(), noise::kNoPeriod);
+    std::vector<Vec4> regs = initial;
+    constexpr float kSamples[4][2] = {{0.13f, 0.37f}, {0.71f, 0.29f}, {0.43f, 0.83f}, {0.91f, 0.61f}};
+    const auto whole = [](float x) { return std::fabs(x - std::round(x)) < 1e-3f; };
+    for (size_t i = 0; i < impl.code.size(); ++i) {
+        const Instr& instr = impl.code[i];
+        const int operand = latticeOperand(instr.op);
+        if (operand < 0) continue;
+        const Operand& pos = instr.in[size_t(operand)];
+        const auto coordsAt = [&](float u, float v) {
+            regs[kTexcoordReg] = {u, v, 0.0f, 0.0f};
+            regs[kPositionReg] = {u, v, 0.0f, 0.0f};
+            runCone(instr.cone, regs.data(), ctx);
+            return load(regs.data(), pos);
+        };
+        const int axes = is2d(instr.op) ? 2 : 3;
+        bool ok = true;
+        std::array<Vec4, 2> step{};  // the coordinates' move for one tile along u, along v
+        for (size_t s = 0; s < 4 && ok; ++s) {
+            const float u = kSamples[s][0], v = kSamples[s][1];
+            const Vec4 p = coordsAt(u, v), pu = coordsAt(u + 1.0f, v), pv = coordsAt(u, v + 1.0f);
+            for (int a = 0; a < axes; ++a) {
+                const float du = pu[size_t(a)] - p[size_t(a)], dv = pv[size_t(a)] - p[size_t(a)];
+                if (s == 0) {
+                    step[0][size_t(a)] = du;
+                    step[1][size_t(a)] = dv;
+                } else if (std::fabs(du - step[0][size_t(a)]) > 1e-3f * (1.0f + std::fabs(du)) ||
+                           std::fabs(dv - step[1][size_t(a)]) > 1e-3f * (1.0f + std::fabs(dv))) {
+                    ok = false;  // not the same move everywhere
+                }
+            }
+        }
+        noise::Period period = noise::kNoPeriod;
+        for (int a = 0; a < axes && ok; ++a) {
+            const float du = step[0][size_t(a)], dv = step[1][size_t(a)];
+            if (!whole(du) || !whole(dv)) {
+                ok = false;
+                break;
+            }
+            const int iu = std::abs(int(std::lround(du))), iv = std::abs(int(std::lround(dv)));
+            int g = iu, h = iv;  // gcd (0 when neither moves)
+            while (h != 0) {
+                const int t = g % h;
+                g = h;
+                h = t;
+            }
+            period[size_t(a)] = g;
+        }
+        if (!ok) {
+            warnings.push_back("node \"" + instr.name +
+                               "\": its coordinates don't move a whole number of cells per tile, so it won't tile");
+            continue;
+        }
+        if (instr.op == Op::fractal2d || instr.op == Op::fractal3d) {
+            const float lacunarity = load(initial.data(), instr.in[2])[0];
+            if (!whole(lacunarity)) {
+                warnings.push_back("node \"" + instr.name +
+                                   "\": a lacunarity that isn't a whole number only tiles its first octave");
+            }
+        }
+        periods[i] = period;
+    }
+    return periods;
 }
 
 uint8_t outputComps(const Program::Impl& impl, const std::string& name, uint32_t& reg, bool& found) {
@@ -847,6 +964,11 @@ BakeResult bake(const Program& program, const BakeOptions& options) {
     ctx.images = &images;
     ctx.du = 1.0f / float(w);
     ctx.dv = 1.0f / float(h);
+    std::vector<noise::Period> periods;
+    if (options.tileable) {
+        periods = measurePeriods(impl, initial, ctx, result.warnings);
+        ctx.periods = &periods;
+    }
 
     std::atomic<uint32_t> nextRow{0};
     const auto worker = [&] {

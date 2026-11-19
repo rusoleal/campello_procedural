@@ -8,6 +8,7 @@ A graph has inputs (the parameters a material sets: brick size, colours, noise s
 - **JSON** (`json.hpp`): reads a glTF document, the extension object or a single graph. It accepts both layouts the draft shows: ports keyed by name with connections by name (the README's examples), or arrays of ports with connections by index (its schema). It writes the first.
 - **Node library** (`nodes.hpp`): the supported nodes with their MaterialX inputs and defaults, for validation and for node editors.
 - **Bake** (`bake.hpp`): compiles a graph to a flat program (type checked, cycles rejected) and evaluates every output in one pass on all cores. It also encodes RGBA8 (linear or sRGB) and builds mip chains (box, or renormalized for normal maps).
+- **Tileable bakes** (`BakeOptions::tileable`): the image repeats seamlessly. Each noise node wraps its lattice at the whole number of cells its coordinates cover per tile, measured before the bake. Nodes that can't wrap are reported in `BakeResult::warnings`.
 
 No dependencies beyond the C++20 standard library. nlohmann/json is bundled privately.
 

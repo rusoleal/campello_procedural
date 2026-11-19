@@ -64,6 +64,18 @@ struct BakeOptions {
     ImageResolver images;
     /// Worker threads; 0: the hardware's.
     uint32_t threads = 0;
+    /// Make the image repeat seamlessly (for textures tiled across a
+    /// surface). MaterialX noise doesn't repeat, so each lattice node
+    /// (noise, fractal, cell and Worley noise) wraps its lattice at the
+    /// period its coordinates have over one tile: whole numbers of cells,
+    /// measured before the bake. Coordinates scaled by whole numbers,
+    /// offset, floored, rotated by multiples of 90 degrees or distorted by
+    /// something that itself tiles all work; a node whose coordinates don't
+    /// repeat that way is left as it is and named in
+    /// BakeResult::warnings. Fractals tile when their lacunarity is a whole
+    /// number. Patterns (checkerboard, ramps...) tile when the graph repeats
+    /// them a whole number of times. Off: the same as MaterialX.
+    bool tileable = false;
 };
 
 /// The baked outputs, in the order asked for (or the graph's order).
@@ -71,6 +83,8 @@ struct BakeResult {
     std::vector<std::string> names;
     std::vector<Image> images;
     std::string error;  ///< empty on success
+    /// Non-fatal problems (BakeOptions::tileable: nodes that won't tile).
+    std::vector<std::string> warnings;
 
     bool ok() const { return error.empty(); }
     /// The image of an output, or null.
