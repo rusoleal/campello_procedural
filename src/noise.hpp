@@ -20,6 +20,13 @@ namespace systems::leal::campello_procedural::noise {
 using Vec2 = std::array<float, 2>;
 using Vec3 = std::array<float, 3>;
 
+// Lattice periods for tileable bakes (campello_procedural addition): integer
+// lattice coordinates wrap modulo the period per axis before hashing; 0 does
+// nothing, so the functions stay MaterialX's.
+using Period = std::array<int, 3>;
+constexpr Period kNoPeriod{0, 0, 0};
+inline int wrap(int i, int period) { return period > 0 ? ((i % period) + period) % period : i; }
+
 inline float select(bool b, float t, float f) { return b ? t : f; }
 inline float negateIf(float v, bool b) { return b ? -v : v; }
 
@@ -122,19 +129,20 @@ inline std::array<uint32_t, 3> hashVec3(int x, int y, int z) {
     return {h & 0xFFu, (h >> 8) & 0xFFu, (h >> 16) & 0xFFu};
 }
 
-inline float perlin(Vec2 p) {
+inline float perlin(Vec2 p, const Period& P = kNoPeriod) {
     int X, Y;
     const float fx = floorFrac(p[0], X);
     const float fy = floorFrac(p[1], Y);
     const float u = fade(fx);
     const float v = fade(fy);
-    const float result = bilerp(gradient(hashInt(X, Y), fx, fy), gradient(hashInt(X + 1, Y), fx - 1.0f, fy),
-                                gradient(hashInt(X, Y + 1), fx, fy - 1.0f),
-                                gradient(hashInt(X + 1, Y + 1), fx - 1.0f, fy - 1.0f), u, v);
+    const int X0 = wrap(X, P[0]), X1 = wrap(X + 1, P[0]), Y0 = wrap(Y, P[1]), Y1 = wrap(Y + 1, P[1]);
+    const float result = bilerp(gradient(hashInt(X0, Y0), fx, fy), gradient(hashInt(X1, Y0), fx - 1.0f, fy),
+                                gradient(hashInt(X0, Y1), fx, fy - 1.0f),
+                                gradient(hashInt(X1, Y1), fx - 1.0f, fy - 1.0f), u, v);
     return gradientScale2d(result);
 }
 
-inline float perlin(Vec3 p) {
+inline float perlin(Vec3 p, const Period& P = kNoPeriod) {
     int X, Y, Z;
     const float fx = floorFrac(p[0], X);
     const float fy = floorFrac(p[1], Y);
@@ -142,23 +150,23 @@ inline float perlin(Vec3 p) {
     const float u = fade(fx);
     const float v = fade(fy);
     const float w = fade(fz);
-    const float result = trilerp(
-        gradient(hashInt(X, Y, Z), fx, fy, fz), gradient(hashInt(X + 1, Y, Z), fx - 1.0f, fy, fz),
-        gradient(hashInt(X, Y + 1, Z), fx, fy - 1.0f, fz), gradient(hashInt(X + 1, Y + 1, Z), fx - 1.0f, fy - 1.0f, fz),
-        gradient(hashInt(X, Y, Z + 1), fx, fy, fz - 1.0f), gradient(hashInt(X + 1, Y, Z + 1), fx - 1.0f, fy, fz - 1.0f),
-        gradient(hashInt(X, Y + 1, Z + 1), fx, fy - 1.0f, fz - 1.0f),
-        gradient(hashInt(X + 1, Y + 1, Z + 1), fx - 1.0f, fy - 1.0f, fz - 1.0f), u, v, w);
-    return gradientScale3d(result);
+    const auto g = [&](int i) {
+        const int dx = i & 1, dy = (i >> 1) & 1, dz = (i >> 2) & 1;
+        return gradient(hashInt(wrap(X + dx, P[0]), wrap(Y + dy, P[1]), wrap(Z + dz, P[2])), fx - float(dx),
+                        fy - float(dy), fz - float(dz));
+    };
+    return gradientScale3d(trilerp(g(0), g(1), g(2), g(3), g(4), g(5), g(6), g(7), u, v, w));
 }
 
 // Three channels: each from its own byte of the corner hashes.
-inline Vec3 perlinVec3(Vec2 p) {
+inline Vec3 perlinVec3(Vec2 p, const Period& P = kNoPeriod) {
     int X, Y;
     const float fx = floorFrac(p[0], X);
     const float fy = floorFrac(p[1], Y);
     const float u = fade(fx);
     const float v = fade(fy);
-    const auto h00 = hashVec3(X, Y), h10 = hashVec3(X + 1, Y), h01 = hashVec3(X, Y + 1), h11 = hashVec3(X + 1, Y + 1);
+    const int X0 = wrap(X, P[0]), X1 = wrap(X + 1, P[0]), Y0 = wrap(Y, P[1]), Y1 = wrap(Y + 1, P[1]);
+    const auto h00 = hashVec3(X0, Y0), h10 = hashVec3(X1, Y0), h01 = hashVec3(X0, Y1), h11 = hashVec3(X1, Y1);
     Vec3 out;
     for (int c = 0; c < 3; ++c) {
         out[size_t(c)] = gradientScale2d(bilerp(gradient(h00[size_t(c)], fx, fy), gradient(h10[size_t(c)], fx - 1.0f, fy),
@@ -168,7 +176,7 @@ inline Vec3 perlinVec3(Vec2 p) {
     return out;
 }
 
-inline Vec3 perlinVec3(Vec3 p) {
+inline Vec3 perlinVec3(Vec3 p, const Period& P = kNoPeriod) {
     int X, Y, Z;
     const float fx = floorFrac(p[0], X);
     const float fy = floorFrac(p[1], Y);
@@ -177,7 +185,9 @@ inline Vec3 perlinVec3(Vec3 p) {
     const float v = fade(fy);
     const float w = fade(fz);
     std::array<std::array<uint32_t, 3>, 8> h;
-    for (int i = 0; i < 8; ++i) h[size_t(i)] = hashVec3(X + (i & 1), Y + ((i >> 1) & 1), Z + ((i >> 2) & 1));
+    for (int i = 0; i < 8; ++i) {
+        h[size_t(i)] = hashVec3(wrap(X + (i & 1), P[0]), wrap(Y + ((i >> 1) & 1), P[1]), wrap(Z + ((i >> 2) & 1), P[2]));
+    }
     Vec3 out;
     for (int c = 0; c < 3; ++c) {
         const auto g = [&](int i) {
@@ -188,27 +198,31 @@ inline Vec3 perlinVec3(Vec3 p) {
     return out;
 }
 
-inline float cell(Vec2 p) { return bitsTo01(hashInt(floorInt(p[0]), floorInt(p[1]))); }
-inline float cell(Vec3 p) { return bitsTo01(hashInt(floorInt(p[0]), floorInt(p[1]), floorInt(p[2]))); }
+inline float cell(Vec2 p, const Period& P = kNoPeriod) {
+    return bitsTo01(hashInt(wrap(floorInt(p[0]), P[0]), wrap(floorInt(p[1]), P[1])));
+}
+inline float cell(Vec3 p, const Period& P = kNoPeriod) {
+    return bitsTo01(hashInt(wrap(floorInt(p[0]), P[0]), wrap(floorInt(p[1]), P[1]), wrap(floorInt(p[2]), P[2])));
+}
 
-inline Vec3 cellVec3(Vec2 p) {
-    const int ix = floorInt(p[0]), iy = floorInt(p[1]);
+inline Vec3 cellVec3(Vec2 p, const Period& P = kNoPeriod) {
+    const int ix = wrap(floorInt(p[0]), P[0]), iy = wrap(floorInt(p[1]), P[1]);
     return {bitsTo01(hashInt(ix, iy, 0)), bitsTo01(hashInt(ix, iy, 1)), bitsTo01(hashInt(ix, iy, 2))};
 }
 
-inline Vec3 cellVec3(Vec3 p) {
-    const int ix = floorInt(p[0]), iy = floorInt(p[1]), iz = floorInt(p[2]);
+inline Vec3 cellVec3(Vec3 p, const Period& P = kNoPeriod) {
+    const int ix = wrap(floorInt(p[0]), P[0]), iy = wrap(floorInt(p[1]), P[1]), iz = wrap(floorInt(p[2]), P[2]);
     return {bitsTo01(hashInt(ix, iy, iz, 0)), bitsTo01(hashInt(ix, iy, iz, 1)), bitsTo01(hashInt(ix, iy, iz, 2))};
 }
 
 // Distance to the nearest jittered feature point (F1, Euclidean).
-inline float worley(Vec2 p, float jitter) {
+inline float worley(Vec2 p, float jitter, const Period& P = kNoPeriod) {
     int X, Y;
     const Vec2 local{floorFrac(p[0], X), floorFrac(p[1], Y)};
     float best = 1e6f;
     for (int x = -1; x <= 1; ++x) {
         for (int y = -1; y <= 1; ++y) {
-            const Vec3 tmp = cellVec3(Vec2{float(x + X), float(y + Y)});
+            const Vec3 tmp = cellVec3(Vec2{float(x + X), float(y + Y)}, P);
             const float ox = (tmp[0] - 0.5f) * jitter + 0.5f;
             const float oy = (tmp[1] - 0.5f) * jitter + 0.5f;
             const float dx = float(x) + ox - local[0];
@@ -219,14 +233,14 @@ inline float worley(Vec2 p, float jitter) {
     return std::sqrt(best);
 }
 
-inline float worley(Vec3 p, float jitter) {
+inline float worley(Vec3 p, float jitter, const Period& P = kNoPeriod) {
     int X, Y, Z;
     const Vec3 local{floorFrac(p[0], X), floorFrac(p[1], Y), floorFrac(p[2], Z)};
     float best = 1e6f;
     for (int x = -1; x <= 1; ++x) {
         for (int y = -1; y <= 1; ++y) {
             for (int z = -1; z <= 1; ++z) {
-                const Vec3 tmp = cellVec3(Vec3{float(x + X), float(y + Y), float(z + Z)});
+                const Vec3 tmp = cellVec3(Vec3{float(x + X), float(y + Y), float(z + Z)}, P);
                 const float dx = float(x) + (tmp[0] - 0.5f) * jitter + 0.5f - local[0];
                 const float dy = float(y) + (tmp[1] - 0.5f) * jitter + 0.5f - local[1];
                 const float dz = float(z) + (tmp[2] - 0.5f) * jitter + 0.5f - local[2];
