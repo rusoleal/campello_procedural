@@ -9,6 +9,15 @@ include(GNUInstallDirs)
 
 option(CAMPELLO_PROCEDURAL_BUILD_TEST "Build the tests" OFF)
 
+# WebAssembly SIMD (-msimd128), on by default: every browser with WebGPU has
+# it. Compiles this directory with it (the library and the third-party code it
+# builds); the target passes it on to its consumers below.
+option(CAMPELLO_PROCEDURAL_WASM_SIMD "WebAssembly builds: use SIMD (-msimd128)" ON)
+if(EMSCRIPTEN AND CAMPELLO_PROCEDURAL_WASM_SIMD)
+    add_compile_options(-msimd128)
+    add_link_options(-msimd128)
+endif()
+
 find_package(Threads REQUIRED)
 
 add_library(${PROJECT_NAME}
@@ -28,6 +37,12 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
+
+# Consumers compile and link with SIMD too (the link tells wasm-opt to accept it).
+if(EMSCRIPTEN AND CAMPELLO_PROCEDURAL_WASM_SIMD)
+    target_compile_options(${PROJECT_NAME} INTERFACE -msimd128)
+    target_link_options(${PROJECT_NAME} INTERFACE -msimd128)
+endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
 
