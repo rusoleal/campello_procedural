@@ -15,7 +15,7 @@
 
 namespace systems::leal::campello_procedural {
 
-/// The library version, e.g. "0.3.0".
+/// The library version, e.g. "0.4.0".
 std::string getVersion();
 
 }  // namespace systems::leal::campello_procedural

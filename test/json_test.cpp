@@ -5,7 +5,7 @@
 using namespace test_util;
 using VT = cp::ValueType;
 
-TEST(Version, MatchesTheProject) { EXPECT_EQ(cp::getVersion(), "0.3.0"); }
+TEST(Version, MatchesTheProject) { EXPECT_EQ(cp::getVersion(), "0.4.0"); }
 
 // The draft's own example (a whole glTF document, README layout).
 TEST(Json, ReadsTheDraftsCheckerboardExample) {

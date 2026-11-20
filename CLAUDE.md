@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`campello_procedural` (v0.3.0) is a C++20 static library for procedural texture graphs:
+`campello_procedural` (v0.4.0) is a C++20 static library for procedural texture graphs:
 - MaterialX 1.39 standard library nodes.
 - The JSON of the draft glTF extension `KHR_texture_procedurals` (KhronosGroup/glTF#2381; a draft, still changing).
 - Baked to float images on the CPU.
